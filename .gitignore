@@ -1,0 +1,44 @@
+# Node / npm
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage / test artifacts
+coverage/
+.nyc_output/
+
+# Build artifacts
+build/
+dist/
+out/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.*
+
+# Secrets (Google/Gmail auth)
+credentials.json
+token.json
+
+# Local test outputs
+test-results/

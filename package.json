@@ -1,0 +1,33 @@
+{
+  "name": "aliance-tests",
+  "version": "1.0.0",
+  "description": "Playwright automated test for logging in and launching SANSOLS module",
+  "main": "gmail-auth.js",
+  "scripts": {
+    "test": "playwright test test-files/login-module.test.js && playwright test test-files/autofill-form.test.js && playwright test test-files/admin-approval.test.js && playwright test test-files/post-approval.test.js && playwright test test-files/final-approval.test.js",
+    "test:headed": "playwright test test-files/login-module.test.js --headed --timeout=120000 && playwright test test-files/autofill-form.test.js --headed --timeout=120000 && playwright test test-files/admin-approval.test.js --headed --timeout=120000 && playwright test test-files/post-approval.test.js --headed --timeout=120000 && playwright test test-files/final-approval.test.js --headed --timeout=120000",
+    "test:list": "playwright test test-files/login-module.test.js test-files/autofill-form.test.js test-files/admin-approval.test.js test-files/post-approval.test.js test-files/final-approval.test.js --list",
+    "test:login": "playwright test test-files/login-module.test.js",
+    "test:login:headed": "playwright test test-files/login-module.test.js --headed --timeout=120000",
+    "test:autofill": "playwright test test-files/autofill-form.test.js",
+    "test:autofill:headed": "playwright test test-files/autofill-form.test.js --headed --timeout=120000",
+    "test:approval": "playwright test test-files/admin-approval.test.js",
+    "test:approval:headed": "playwright test test-files/admin-approval.test.js --headed --timeout=120000",
+    "test:post-approval": "playwright test test-files/post-approval.test.js",
+    "test:post-approval:headed": "playwright test test-files/post-approval.test.js --headed --timeout=120000",
+    "test:final-approval": "playwright test test-files/final-approval.test.js",
+    "test:final-approval:headed": "playwright test test-files/final-approval.test.js --headed --timeout=120000",
+    "test:ui": "playwright test --ui"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^171.4.0"
+  }
+}
