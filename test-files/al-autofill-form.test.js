@@ -1176,12 +1176,16 @@ async function fillAndNavigateEXPRTForm(targetPage) {
 
         // 1. Direct Target: Click the interactive input field wrapper or the input directly
         console.log('⏳ Locating Job Position interactive components...');
+        // The placeholder wording differs by Expatriate type: "Others" shows
+        // just "Use HOR" (no MASCO option), while Specialist/Cross-Posting
+        // show "Use HOR or MASCO Code". Match on the type-appropriate text.
+        const jobFieldPlaceholder = expatType === 'others' ? 'Use HOR' : 'Use HOR or MASCO Code';
         const jobInputField = dialogModal
-          .locator('input[placeholder="Use HOR or MASCO Code"]')
+          .locator(`input[placeholder="${jobFieldPlaceholder}"]`)
           .first();
 
         const jobFieldWrapper = dialogModal
-          .locator('div.MuiInputBase-root:has(input[placeholder="Use HOR or MASCO Code"])')
+          .locator(`div.MuiInputBase-root:has(input[placeholder="${jobFieldPlaceholder}"])`)
           .first();
 
         await jobFieldWrapper.waitFor({ state: 'visible', timeout: 6000 });
@@ -1209,13 +1213,37 @@ async function fillAndNavigateEXPRTForm(targetPage) {
         await jobPopup.waitFor({ state: 'visible', timeout: 5000 });
         console.log('🎯 Job Selection Pop-up modal verified visible.');
 
-        // 3. Evaluate HOR existence check
+        // 3. Decide HOR vs MASCO for this worker.
+        // - "Others" type: the field only ever shows "Use HOR" — there is no
+        //   MASCO tab available at all, so always use HOR regardless of
+        //   random roll.
+        // - "Specialist" / "Cross-Posting" type: the field shows "Use HOR or
+        //   MASCO Code" — both options exist. Randomize between them when
+        //   HOR listings are actually available; if no HOR exists, MASCO is
+        //   the only usable option regardless of the random roll.
         const noHorIndicator = jobPopup.locator('text=No Hiring Outcome Reports available');
         const hasNoHor = await noHorIndicator.isVisible().catch(() => false);
 
-        // ── 3. Handle MASCO Code Search (Inside the "if (hasNoHor)" condition block) ──
-        if (hasNoHor) {
-          console.log('❌ No HOR available. Switching to "Enter MASCO Code" tab...');
+        let useMasco;
+        if (expatType === 'others') {
+          useMasco = false;
+          console.log('📋 Expatriate type "Others" — MASCO Code is not available for this type, using HOR.');
+        } else if (hasNoHor) {
+          useMasco = true;
+          console.log('❌ No HOR available. Falling back to "Enter MASCO Code".');
+        } else {
+          useMasco = Math.random() < 0.5;
+          console.log(`🎲 HOR is available — randomly decided to use ${useMasco ? 'MASCO Code' : 'HOR'} for this worker.`);
+        }
+
+        // Tracks whether HOR was actually used, since HOR auto-populates
+        // Job Position AND Job Description (both shown greyed-out/locked in
+        // the UI) — those two fields must be left untouched when true.
+        let usedHor = false;
+
+        // ── Handle MASCO Code Search ──
+        if (useMasco) {
+          console.log('🔎 Using "Enter MASCO Code" tab...');
 
           const mascoTab = jobPopup.locator('div, button, span').filter({ hasText: /^Enter MASCO Code$/ }).first();
           await mascoTab.waitFor({ state: 'visible', timeout: 5000 });
@@ -1263,12 +1291,47 @@ async function fillAndNavigateEXPRTForm(targetPage) {
 
           console.log('✅ Clicked and assigned MASCO code item from the results list!');
         } else {
-          console.log('🔎 HOR listings found! Selecting the first available report...');
-          const firstHorOption = jobPopup.locator('[role="row"], .MuiListItem-root, table tbody tr, div[role="button"]')
-            .filter({ hasNotText: /Search HOR|Select HOR|Enter MASCO Code|Cancel/i }).first();
-          await firstHorOption.waitFor({ state: 'visible', timeout: 5000 });
-          await firstHorOption.click({ force: true });
+          console.log('🔎 Using HOR — checking how many HOR listings are available...');
+
+          // Each HOR card has a small "Approved Date" label as an exact-text
+          // leaf element (e.g. a <p>/<span>), unlike the surrounding card
+          // container <div> which would also match a plain substring search
+          // (since a parent's innerText includes all child text too). Anchor
+          // on the exact-text leaf label to get an accurate count of real
+          // cards without ancestor-inflation, then walk up to the card
+          // container for each one.
+          const horDateLabels = jobPopup.locator('p, span, div')
+            .filter({ hasText: /^Approved Date$/i });
+
+          const horCardCount = await horDateLabels.count();
+          console.log(`📋 Found ${horCardCount} HOR listing(s) available.`);
+
+          // Pick a random card by index. If there's only one, this always
+          // resolves to index 0.
+          const chosenIndex = horCardCount > 1 ? Math.floor(Math.random() * horCardCount) : 0;
+          console.log(`🎲 Selecting HOR listing #${chosenIndex + 1} of ${horCardCount}.`);
+
+          // Walk up from the "Approved Date" label to the card container
+          // (identified as the nearest ancestor that also contains the
+          // "Positions" count, i.e. the whole card), then click the "+"
+          // select button inside that card.
+          const chosenCard = horDateLabels.nth(chosenIndex)
+            .locator('xpath=ancestor::*[.//*[contains(text(),"Positions")]][1]');
+
+          await chosenCard.waitFor({ state: 'visible', timeout: 5000 });
+          await chosenCard.scrollIntoViewIfNeeded();
+
+          const addBtnInCard = chosenCard.locator('button, [role="button"]').first();
+
+          try {
+            await addBtnInCard.click({ force: true, timeout: 3000 });
+          } catch (addBtnErr) {
+            console.log('⚠️ Could not click the "+" button directly, falling back to clicking the card itself...');
+            await chosenCard.click({ force: true });
+          }
+
           console.log('✅ Clicked and selected available HOR report entry.');
+          usedHor = true;
         }
 
         // Allow the popup modal frame to dismiss completely and return focus to main Page 3 fields
@@ -1346,15 +1409,21 @@ async function fillAndNavigateEXPRTForm(targetPage) {
         await justificationField.fill(chosenJustification);
         console.log('✓ Filled Justification paragraph.');
 
-        // 5. Job Description Textarea (Target by matching row sibling layout structure)
-        const jobDescField = targetPage.locator('p, span, label')
-          .filter({ hasText: /^Job Description/i })
-          .locator('xpath=../descendant::textarea')
-          .first();
+        // 5. Job Description Textarea — skipped when HOR was used, since HOR
+        // auto-populates this field (shown greyed-out/locked in the UI) and
+        // it should not be manually overwritten.
+        if (usedHor) {
+          console.log('  ℹ️ HOR was used — Job Description is auto-filled and locked, skipping manual fill.');
+        } else {
+          const jobDescField = targetPage.locator('p, span, label')
+            .filter({ hasText: /^Job Description/i })
+            .locator('xpath=../descendant::textarea')
+            .first();
 
-        await jobDescField.waitFor({ state: 'visible', timeout: 5000 });
-        await jobDescField.fill(chosenJobDesc);
-        console.log('✓ Filled Job Description paragraph.');
+          await jobDescField.waitFor({ state: 'visible', timeout: 5000 });
+          await jobDescField.fill(chosenJobDesc);
+          console.log('✓ Filled Job Description paragraph.');
+        }
 
         console.log('✨ Page 3 Form variables completely populated!');
         await targetPage.waitForTimeout(1000);
@@ -1414,52 +1483,60 @@ async function fillAndNavigateEXPRTForm(targetPage) {
           }
           console.log('✓ All 5 distinct workflow views updated sequentially!');
 
-          // 3. Address Line 1 (Randomized based on Kuching)
-          const address1Options = ['Lot 245, Sublot 3, Jalan Satok', 'No. 18, Taman Stapok Lane 2', 'Level 5, Wisma Sarawak', 'Block B, Kuching Business Park'];
-          const randomAddress1 = address1Options[Math.floor(Math.random() * address1Options.length)];
+          // 3-6. Address Line 1/2, Postcode, District, Division, State are
+          // auto-populated (disabled/greyed-out) from the company's own
+          // address in this section — attempting .fill() on a disabled field
+          // makes Playwright wait indefinitely for it to become editable,
+          // which is what caused the flow to hang after the photo uploads.
+          // Verify they're actually disabled before skipping; if they're
+          // ever NOT disabled (e.g. a different company setup), fill them.
           const addr1Input = getPOEField('Address Line 1');
-          await addr1Input.fill(randomAddress1);
-          console.log(`✓ Filled Address Line 1: "${randomAddress1}"`);
+          const addr1Disabled = await addr1Input.isDisabled().catch(() => true);
 
-          // 4. Address Line 2 (Randomized secondary addresses)
-          const address2Options = ['Jalan Tun Jugah', 'Off Jalan Rock', 'Petra Jaya District', 'Jalan Green'];
-          const randomAddress2 = address2Options[Math.floor(Math.random() * address2Options.length)];
-          const addr2Input = getPOEField('Address Line 2');
-          await addr2Input.fill(randomAddress2);
-          console.log(`✓ Filled Address Line 2: "${randomAddress2}"`);
-
-          // 5. Address Line 3 & 4 (Skipped intentionally)
-          console.log('✓ Left Address Lines 3 and 4 empty.');
-
-          // 6. Postcode (Types 93000 to trigger dropdown filtering/autofill)
-          const postcodeField = targetPage.locator('p, span, label')
-            .filter({ hasText: /^Postcode\s*\*?$/i })
-            .locator('xpath=../descendant::input | ../descendant::div[@role="combobox"]')
-            .first();
-
-          await postcodeField.waitFor({ state: 'visible', timeout: 5000 });
-          await postcodeField.click();
-          await postcodeField.press('Control+A');
-          await postcodeField.press('Backspace');
-          await postcodeField.pressSequentially('93000', { delay: 150 });
-          await targetPage.waitForTimeout(1000);
-
-          // Select the dropdown option matching 93000
-          const postcodeOption = targetPage.locator('[role="option"], .MuiAutocomplete-option, .MuiMenuItem-root')
-            .filter({ hasText: /93000/ })
-            .first();
-
-          if (await postcodeOption.isVisible().catch(() => false)) {
-            await postcodeOption.click();
-            console.log('✓ Postcode option selected from drop list.');
+          if (addr1Disabled) {
+            console.log('  ℹ️ Address Line 1 / Postcode / District / Division / State are auto-filled and locked from company address — skipping.');
           } else {
-            await postcodeField.press('Enter');
-            console.log('✓ Postcode submitted via enter sequence.');
-          }
+            const address1Options = ['Lot 245, Sublot 3, Jalan Satok', 'No. 18, Taman Stapok Lane 2', 'Level 5, Wisma Sarawak', 'Block B, Kuching Business Park'];
+            const randomAddress1 = address1Options[Math.floor(Math.random() * address1Options.length)];
+            await addr1Input.fill(randomAddress1);
+            console.log(`✓ Filled Address Line 1: "${randomAddress1}"`);
 
-          // Allow time for District, Division, and State fields to autofill completely
-          await targetPage.waitForTimeout(2000);
-          console.log('✨ Autofill values for District, Division, and State updated.');
+            const address2Options = ['Jalan Tun Jugah', 'Off Jalan Rock', 'Petra Jaya District', 'Jalan Green'];
+            const randomAddress2 = address2Options[Math.floor(Math.random() * address2Options.length)];
+            const addr2Input = getPOEField('Address Line 2');
+            await addr2Input.fill(randomAddress2);
+            console.log(`✓ Filled Address Line 2: "${randomAddress2}"`);
+
+            console.log('✓ Left Address Lines 3 and 4 empty.');
+
+            // Postcode (types 93000 to trigger dropdown filtering/autofill)
+            const postcodeField = targetPage.locator('p, span, label')
+              .filter({ hasText: /^Postcode\s*\*?$/i })
+              .locator('xpath=../descendant::input | ../descendant::div[@role="combobox"]')
+              .first();
+
+            await postcodeField.waitFor({ state: 'visible', timeout: 5000 });
+            await postcodeField.click();
+            await postcodeField.press('Control+A');
+            await postcodeField.press('Backspace');
+            await postcodeField.pressSequentially('93000', { delay: 150 });
+            await targetPage.waitForTimeout(1000);
+
+            const postcodeOption = targetPage.locator('[role="option"], .MuiAutocomplete-option, .MuiMenuItem-root')
+              .filter({ hasText: /93000/ })
+              .first();
+
+            if (await postcodeOption.isVisible().catch(() => false)) {
+              await postcodeOption.click();
+              console.log('✓ Postcode option selected from drop list.');
+            } else {
+              await postcodeField.press('Enter');
+              console.log('✓ Postcode submitted via enter sequence.');
+            }
+
+            await targetPage.waitForTimeout(2000);
+            console.log('✨ Autofill values for District, Division, and State updated.');
+          }
 
         } catch (e) {
           console.log(`⚠️ Could not save Page 3 / click Next: ${e.message}`);
@@ -2079,13 +2156,14 @@ async function fillAndNavigateEXPRTForm(targetPage) {
 test.describe('EXPRT - Create AL Flow', () => {
 
   test('Login, click module to open new tab, and start AL creation', async ({ page }, testInfo) => {
-    // This flow spans login/OTP + 5 modal pages of form filling and file
-    // uploads, which routinely exceeds the default/CLI 120000ms test timeout
-    // even when every individual step succeeds. Extend it here so the test
-    // doesn't get killed mid-flight (which manifests as random "Target page,
-    // context or browser has been closed" errors on whatever step happened
-    // to be running when the clock ran out).
-    test.setTimeout(300000);
+    // This flow spans login/OTP + N expatriate workers (each a 5-page modal
+    // fill with uploads) + candidates + attachments + declaration/signature.
+    // A fixed timeout doesn't scale with EXPAT_COUNT, so give a generous
+    // base budget for one worker plus extra time per additional worker.
+    const expatCountForTimeout = Math.max(1, parseInt(process.env.EXPAT_COUNT || '1', 10));
+    const dynamicTimeout = 300000 + (expatCountForTimeout - 1) * 180000; // +3min per extra worker
+    test.setTimeout(dynamicTimeout);
+    console.log(`⏱️ Test timeout set to ${dynamicTimeout / 1000}s for EXPAT_COUNT=${expatCountForTimeout}.`);
 
     const runStartedAt = new Date().toISOString();
 
