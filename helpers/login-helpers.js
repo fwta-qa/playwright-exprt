@@ -24,6 +24,13 @@ const CONFIG = {
   jobTypeNRE: parseBoolean(process.env.JOB_TYPE_NRE),
   use2FA: parseBoolean(process.env.USE_2FA),
   pdfUploadPath: (process.env.PDF_UPLOAD_PATH || '').trim(),
+  // 'new' → "New Application"  |  'renew' → "Renew Application"
+  alApplicationType: (process.env.AL_APPLICATION_TYPE || 'new').trim().toLowerCase(),
+  // 'ep' → "Employment Pass"    |  'pvp' → "Professional Visit Pass"
+  alPassType: (process.env.AL_PASS_TYPE || 'ep').trim().toLowerCase(),
+  // Expat category option to pick from "+ Add New" dropdown
+  // Options: 'specialist' (Specialist / Shareholding) | 'crossposting' (Cross-Posting) | 'others' (Others)
+  alExpatType: (process.env.AL_EXPAT_TYPE || 'specialist').trim().toLowerCase(),
   elementTimeout: 15000,
 };
 
@@ -303,7 +310,7 @@ async function selectModule(page, moduleName) {
     .filter({ hasText: moduleName })
     .first();
 
-  await moduleBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await moduleBtn.waitFor({ state: 'visible', timeout: 15000 });
   await moduleBtn.scrollIntoViewIfNeeded();
   await page.waitForTimeout(500);
 
@@ -413,7 +420,7 @@ async function waitForUrlOrRefresh(page, urlPattern, timeoutMs = 10000, maxRetri
     } catch {
       if (attempt < maxRetries) {
         console.warn(`⚠️ [Attempt ${attempt}] Page too slow (>${timeoutMs}ms). Refreshing tab...`);
-        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => { });
         await page.waitForTimeout(2000);
       } else {
         throw new Error(`❌ Page did not navigate to expected URL after ${maxRetries} attempts. Last URL: ${page.url()}`);
@@ -439,7 +446,7 @@ async function waitForSelectorOrRefresh(page, selector, timeoutMs = 10000, maxRe
     } catch {
       if (attempt < maxRetries) {
         console.warn(`⚠️ [Attempt ${attempt}] Selector not visible (>${timeoutMs}ms). Refreshing tab...`);
-        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => { });
         await page.waitForTimeout(2000);
       } else {
         throw new Error(`❌ Selector "${selector}" not visible after ${maxRetries} attempts on ${page.url()}`);
