@@ -8,7 +8,10 @@ const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './test-files',
-  timeout: 300000,
+  // Base timeout for a single-worker run. al-autofill-form.test.js
+  // overrides this with test.setTimeout() scaled to EXPAT_COUNT, since each
+  // additional expatriate worker adds a full 5-page modal fill to the flow.
+  timeout: 600000,
   reporter: [
     ['list'],
     // Opens the HTML report automatically only when a test fails, so a
