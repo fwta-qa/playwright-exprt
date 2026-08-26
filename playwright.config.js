@@ -12,6 +12,27 @@ module.exports = defineConfig({
   // overrides this with test.setTimeout() scaled to EXPAT_COUNT, since each
   // additional expatriate worker adds a full 5-page modal fill to the flow.
   timeout: 600000,
+  // Named projects let package.json target each test file individually via
+  // --project=<name> (e.g. "npm run test:autofill-al" / "test:admin-approve"
+  // run in total isolation — no other project's tests execute alongside).
+  //
+  // NOTE: deliberately NOT using Playwright's `dependencies` here. A
+  // dependency project always runs automatically whenever the dependent
+  // project runs (even if you target it directly with --project), which is
+  // exactly the "admin-approve runs autofill too" behavior we don't want.
+  // Sequencing "run autofill THEN admin" for the combined "npm test" case is
+  // instead handled in package.json by chaining two separate
+  // `playwright test --project=...` commands with `&&`.
+  projects: [
+    {
+      name: 'employer-al-autofill',
+      testMatch: 'al-autofill-form.test.js',
+    },
+    {
+      name: 'admin-approval',
+      testMatch: 'admin-approve-application.test.js',
+    },
+  ],
   reporter: [
     ['list'],
     // Opens the HTML report automatically only when a test fails, so a
