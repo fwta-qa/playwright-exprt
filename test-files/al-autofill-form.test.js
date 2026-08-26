@@ -86,6 +86,68 @@ async function clickAddALButton(page) {
     await page.waitForLoadState('networkidle').catch(() => { });
     await page.waitForTimeout(2000); // Wait for the transition to the main form page
   }
+
+  // ── Capture Application No. + ID right after creation ──────────────────
+  // The application record (and its unique ID) exists the moment this form
+  // page loads — waiting until after the final Submit to grab the ID is too
+  // late/fragile, since a hard failure anywhere in the multi-page form would
+  // mean no ID ever gets captured at all. Grab both the human-readable
+  // reference number (e.g. "No. OMLOEJ", shown top-left of the form) and the
+  // URL's ?id=<uuid> here instead, then persist immediately.
+  await captureApplicationIdentifiers(page);
+}
+
+/**
+ * Capture the application's human-readable reference number ("No. XXXXX")
+ * and its underlying UUID (from the page URL's ?id= param) as soon as the
+ * application form is created, and persist them to .test-state/ so the
+ * admin-approval test can pick them up even if this run later fails.
+ */
+async function captureApplicationIdentifiers(page) {
+  try {
+    await page.waitForTimeout(1000);
+
+    // The reference number renders as "No. <CODE>" near the top-left of the
+    // form header (see stepper header: "< Back  Add New Application  No. OMLOEJ").
+    const refNoLocator = page.locator('text=/^No\\.\\s*\\S+$/').first();
+    let referenceNo = null;
+    const refVisible = await refNoLocator.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
+    if (refVisible) {
+      const refText = await refNoLocator.innerText().catch(() => '');
+      const refMatch = refText.match(/No\.\s*(\S+)/);
+      if (refMatch) referenceNo = refMatch[1];
+    }
+
+    const currentUrl = page.url();
+    const idMatch = currentUrl.match(/[?&]id=([0-9a-fA-F-]{36})/);
+    const applicationId = idMatch ? idMatch[1] : null;
+
+    if (!applicationId && !referenceNo) {
+      console.log(`⚠️ Could not capture Application No. or ID from page (URL: ${currentUrl})`);
+      return;
+    }
+
+    console.log(`🆔 Captured Application Reference No.: ${referenceNo || '(not found)'}`);
+    console.log(`🆔 Captured Application ID: ${applicationId || '(not found)'}`);
+
+    const fs = require('fs');
+    const path = require('path');
+    // Saved outside test-results/ deliberately: Playwright wipes its
+    // outputDir (test-results) at the start of every run, which would
+    // delete this hand-off file before a separate admin test could read it.
+    const stateDir = path.resolve(__dirname, '..', '.test-state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    const lastIdPath = path.join(stateDir, 'last-application-id.json');
+    fs.writeFileSync(lastIdPath, JSON.stringify({
+      applicationId,
+      referenceNo,
+      url: currentUrl,
+      capturedAt: new Date().toISOString(),
+    }, null, 2));
+    console.log(`💾 Saved Application No./ID to ${lastIdPath}`);
+  } catch (err) {
+    console.log(`⚠️ Could not capture Application No./ID: ${err.message}`);
+  }
 }
 
 async function fillAndNavigateEXPRTForm(targetPage) {
@@ -2132,6 +2194,31 @@ async function fillAndNavigateEXPRTForm(targetPage) {
           await targetPage.screenshot({ path: 'test-results/application-submitted.png', fullPage: true }).catch(() => { });
           console.log('🎉 Application submission flow complete!');
           reportData.finalSubmit.status = 'submitted';
+
+          // The Application No./ID were already captured right after
+          // creation (captureApplicationIdentifiers, called before the form
+          // fill even started) since that data exists from the moment the
+          // record is created — waiting until now would be too late if any
+          // earlier step in the form had failed. Just mark the saved
+          // hand-off file as submission-confirmed and echo it into the report.
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            const lastIdPath = path.resolve(__dirname, '..', '.test-state', 'last-application-id.json');
+            if (fs.existsSync(lastIdPath)) {
+              const saved = JSON.parse(fs.readFileSync(lastIdPath, 'utf-8'));
+              saved.submittedUrl = targetPage.url();
+              saved.confirmedSubmitted = true;
+              fs.writeFileSync(lastIdPath, JSON.stringify(saved, null, 2));
+              reportData.finalSubmit.applicationId = saved.applicationId;
+              reportData.finalSubmit.referenceNo = saved.referenceNo;
+              console.log(`🆔 Confirmed submission for Application No. "${saved.referenceNo}" (ID: ${saved.applicationId})`);
+            } else {
+              console.log('⚠️ No earlier-captured Application No./ID file found to confirm against.');
+            }
+          } catch (idErr) {
+            console.log(`⚠️ Could not confirm/update application ID file: ${idErr.message}`);
+          }
         } catch (submitErr) {
           console.log(`⚠️ Could not click final Submit button: ${submitErr.message}`);
           await targetPage.screenshot({ path: 'test-results/submit-error.png', fullPage: true }).catch(() => { });

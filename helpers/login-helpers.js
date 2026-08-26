@@ -354,10 +354,19 @@ async function fullLoginFlow(page) {
 
 /**
  * Fully isolated login flow specifically for the Admin portal
- * @param {import('@playwright/test').Page} page 
- * @param {string} adminEmail 
+ * @param {import('@playwright/test').Page} page
+ * @param {string} adminEmail
+ * @param {object} [options]
+ * @param {boolean} [options.selectModule=true] - Whether to auto-click the
+ *   configured admin module (CONFIG.moduleNameAdminJS) after login. Pass
+ *   false to stay on the initial post-login dashboard, e.g. when the
+ *   caller wants to find and click a different module button itself (the
+ *   SSO dashboard issues one-time redirect tokens per domain, so navigating
+ *   away and back invalidates the session — module selection must happen
+ *   directly off this landing page, not via a fresh page.goto()).
  */
-async function adminLoginFlow(page, adminEmail) {
+async function adminLoginFlow(page, adminEmail, options = {}) {
+  const { selectModule: shouldSelectModule = true } = options;
   if (!adminEmail) {
     throw new Error('❌ adminLoginFlow failed: No admin email was provided.');
   }
@@ -395,8 +404,15 @@ async function adminLoginFlow(page, adminEmail) {
   // 4. Admin profiles typically skip company selection entirely!
   console.log('ℹ️ [ADMIN] Skipping company selection block.');
 
+  // Give the dashboard a moment to settle down and render its module tiles
+  await page.waitForTimeout(3000);
+
+  if (!shouldSelectModule) {
+    console.log('ℹ️ [ADMIN] Skipping module auto-selection — staying on the post-login dashboard.');
+    return page;
+  }
+
   // 5. Select the Module
-  await page.waitForTimeout(3000); // Give the dashboard a moment to settle down
   console.log(`📦 [ADMIN] Selecting module: "${CONFIG.moduleNameAdminJS}"`);
   await selectModule(page, CONFIG.moduleNameAdminJS);
 

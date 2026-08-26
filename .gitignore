@@ -42,3 +42,4 @@ token.json
 
 # Local test outputs
 test-results/
+.test-state/
