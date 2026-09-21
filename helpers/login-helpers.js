@@ -32,7 +32,20 @@ const CONFIG = {
   // Options: 'specialist' (Specialist / Shareholding) | 'crossposting' (Cross-Posting) | 'others' (Others)
   alExpatType: (process.env.AL_EXPAT_TYPE || 'specialist').trim().toLowerCase(),
   elementTimeout: 15000,
+  // Multiplies every waitFor()/timeout budget across the suite. On a slow
+  // or flaky connection, the fixed 5-10s timeouts scattered through the
+  // form-fill logic can trip well before the page has actually finished
+  // loading — bump this (e.g. SLOW_NETWORK=2) rather than editing timeouts
+  // individually. Defaults to 1 (no change) for a normal connection.
+  networkTimeoutMultiplier: Math.max(1, parseFloat(process.env.SLOW_NETWORK || '1') || 1),
 };
+
+// Scales a millisecond timeout by CONFIG.networkTimeoutMultiplier. Use this
+// wherever a fixed waitFor()/timeout value risks being too tight on a slow
+// connection, instead of hardcoding the number directly.
+function scaledTimeout(ms) {
+  return Math.round(ms * CONFIG.networkTimeoutMultiplier);
+}
 
 // Paths for Gmail credentials/token
 const TOKEN_PATH = path.resolve(__dirname, '..', 'token.json');
@@ -474,6 +487,7 @@ async function waitForSelectorOrRefresh(page, selector, timeoutMs = 10000, maxRe
 module.exports = {
   CONFIG,
   parseBoolean,
+  scaledTimeout,
   getOtpFromGmail,
   findElementInFrames,
   findEmailField,

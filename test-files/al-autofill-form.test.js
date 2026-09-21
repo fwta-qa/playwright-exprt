@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-import { CONFIG, fullLoginFlow, waitForUrlOrRefresh } from '../helpers/login-helpers';
+import { CONFIG, fullLoginFlow, waitForUrlOrRefresh, scaledTimeout } from '../helpers/login-helpers';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -2068,13 +2068,13 @@ async function fillAndNavigateEXPRTForm(targetPage) {
       const outerNextBtn2 = targetPage.getByRole('button', { name: /^Next$/i }).first()
         .or(targetPage.locator('button:has-text("Next")').first());
 
-      await outerNextBtn2.waitFor({ state: 'visible', timeout: 10000 });
+      await outerNextBtn2.waitFor({ state: 'visible', timeout: scaledTimeout(10000) });
       await outerNextBtn2.scrollIntoViewIfNeeded();
-      await outerNextBtn2.click({ timeout: 10000 });
+      await outerNextBtn2.click({ timeout: scaledTimeout(10000) });
 
       const declarationHeader = targetPage.locator("text=Employer's Declaration").first()
         .or(targetPage.locator('text=Employer’s Declaration').first()); // curly apostrophe variant
-      await declarationHeader.waitFor({ state: 'visible', timeout: 15000 });
+      await declarationHeader.waitFor({ state: 'visible', timeout: scaledTimeout(15000) });
       console.log('✅ Landed on "Employer\'s Declaration & Undertaking" page.');
       reportData.employerDeclaration.status = 'page reached';
 
@@ -2082,12 +2082,30 @@ async function fillAndNavigateEXPRTForm(targetPage) {
       // text — <button><img src="...icon_declaration.svg" ...></button> —
       // so text-based locators never matched the button itself, only a
       // nearby caption. Target it by its icon image's src instead.
+      //
+      // This specific selector was seen timing out at the previous fixed
+      // 8000ms on a slow/flaky connection — retry with a page reload (same
+      // resilience pattern as waitForUrlOrRefresh elsewhere in the suite)
+      // rather than failing outright on the first slow load.
       const signBtn = targetPage.locator('button:has(img[src*="icon_declaration"])').first()
         .or(targetPage.locator('button:has(img[alt*="Sign" i])').first());
 
-      await signBtn.waitFor({ state: 'visible', timeout: 8000 });
+      let signBtnReady = await signBtn.waitFor({ state: 'visible', timeout: scaledTimeout(8000) })
+        .then(() => true).catch(() => false);
+      if (!signBtnReady) {
+        console.warn('⚠️ "Click Here to Sign" button not visible yet — reloading and retrying once...');
+        await targetPage.reload({ waitUntil: 'domcontentloaded' }).catch(() => { });
+        await targetPage.waitForTimeout(scaledTimeout(2000));
+        await declarationHeader.waitFor({ state: 'visible', timeout: scaledTimeout(15000) }).catch(() => { });
+        signBtnReady = await signBtn.waitFor({ state: 'visible', timeout: scaledTimeout(10000) })
+          .then(() => true).catch(() => false);
+      }
+      if (!signBtnReady) {
+        throw new Error('"Click Here to Sign" button never became visible, even after a reload retry.');
+      }
+
       await signBtn.scrollIntoViewIfNeeded();
-      await signBtn.click({ timeout: 8000 });
+      await signBtn.click({ timeout: scaledTimeout(8000) });
       console.log('✅ Clicked "Click Here to Sign" button.');
       await targetPage.waitForTimeout(1500);
 
@@ -2248,9 +2266,13 @@ test.describe('EXPRT - Create AL Flow', () => {
     // A fixed timeout doesn't scale with EXPAT_COUNT, so give a generous
     // base budget for one worker plus extra time per additional worker.
     const expatCountForTimeout = Math.max(1, parseInt(process.env.EXPAT_COUNT || '1', 10));
-    const dynamicTimeout = 300000 + (expatCountForTimeout - 1) * 180000; // +3min per extra worker
+    // Also scaled by SLOW_NETWORK (via scaledTimeout) so a slow/flaky
+    // connection gets a proportionally longer overall budget, not just
+    // longer individual element waits — a run that keeps hitting retries
+    // on every step needs more total time, not just more patience per step.
+    const dynamicTimeout = scaledTimeout(300000 + (expatCountForTimeout - 1) * 180000); // +3min per extra worker
     test.setTimeout(dynamicTimeout);
-    console.log(`⏱️ Test timeout set to ${dynamicTimeout / 1000}s for EXPAT_COUNT=${expatCountForTimeout}.`);
+    console.log(`⏱️ Test timeout set to ${dynamicTimeout / 1000}s for EXPAT_COUNT=${expatCountForTimeout}${CONFIG.networkTimeoutMultiplier !== 1 ? ` (SLOW_NETWORK=${CONFIG.networkTimeoutMultiplier}x)` : ''}.`);
 
     const runStartedAt = new Date().toISOString();
 
