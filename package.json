@@ -4,13 +4,15 @@
   "description": "Playwright automated test for logging in and launching SANSOLS module",
   "main": "gmail-auth.js",
   "scripts": {
-    "test": "npm run test:autofill-al && npm run test:admin-approve",
-    "test:headed": "npm run test:autofill-al:headed && npm run test:admin-approve:headed",
+    "test": "npm run test:autofill-al && npm run test:admin-approve && npm run test:evdr",
+    "test:headed": "npm run test:autofill-al:headed && npm run test:admin-approve:headed && npm run test:evdr:headed",
     "test:list": "playwright test --list",
     "test:autofill-al": "playwright test --project=employer-al-autofill",
     "test:autofill-al:headed": "playwright test --project=employer-al-autofill --headed",
     "test:admin-approve": "playwright test --project=admin-approval",
     "test:admin-approve:headed": "playwright test --project=admin-approval --headed",
+    "test:evdr": "playwright test --project=evdr-worker-submission",
+    "test:evdr:headed": "playwright test --project=evdr-worker-submission --headed",
     "test:ui": "playwright test --ui",
     "report": "playwright show-report"
   },

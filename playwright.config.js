@@ -32,6 +32,10 @@ module.exports = defineConfig({
       name: 'admin-approval',
       testMatch: 'admin-approve-application.test.js',
     },
+    {
+      name: 'evdr-worker-submission',
+      testMatch: 'evdr-worker-submission.test.js',
+    },
   ],
   reporter: [
     ['list'],

@@ -2,10 +2,11 @@
 
 Playwright automation for the **EXPRT AL (Approval Letter) application flow** on the SANSOLS/Genesis platform, end to end:
 
-1. **Employer side** — logs in, fills out a full AL application (Corporate Details, Expatriate Workers, Local Understudy Candidates, Supporting Documents, Employer's Declaration + e-signature), and submits it.
-2. **Admin side** — resolves the assigned government officer via an internal QA API, then walks the application through the full approval hierarchy (JIMS → ILMU → JKLE → ILMU Director → State Secretary), bypasses the proforma waiting period, and completes the final payment on the employer side via the FWTA Payment Portal.
+1. **Employer side (AL application)** — logs in, fills out a full AL application (Corporate Details, Expatriate Workers, Local Understudy Candidates, Supporting Documents, Employer's Declaration + e-signature), and submits it.
+2. **Admin side (approval + payment)** — resolves the assigned government officer via an internal QA API, then walks the application through the full approval hierarchy (JIMS → ILMU → JKLE → ILMU Director → State Secretary), bypasses the proforma waiting period, and completes the final payment on the employer side via the FWTA Payment Portal.
+3. **eVDR worker submission** — once approved and paid, submits the worker through the eVDR module on both the employer side (Person-in-Charge details + Visa Form) and the admin side (a separate `jims_hq_officer_expat` approval step, ahead of licence generation).
 
-Both flows use Gmail-based OTP retrieval (or a fixed "decoy" OTP for demo/dev environments), and produce QA-friendly HTML/PDF reports after every run.
+All three flows use Gmail-based OTP retrieval (or a fixed "decoy" OTP for demo/dev environments), and produce QA-friendly HTML/PDF reports after every run.
 
 ---
 
@@ -60,13 +61,15 @@ Copy `env.example` to `.env` (if you don't already have one) and fill in your va
 | QA Tools API | `QA_TOOLS_BASE_URL`, `QA_TOOLS_USERNAME`, `QA_TOOLS_PASSWORD` |
 | Admin approval decisions | `ADMIN_RECOMMENDATION`, `ADMIN_ACCEPT_REVIEW`, `SITE_INSPECTION_REQUIRED`, `DSS_REVIEW`, `STATE_SECRETARY_DECISION`, `JKLE_AGENCY_CONFIRM` |
 | Payment | `USE_EWALLET_CREDITS` |
+| eVDR | `MODULE_NAME_EVDR`, `APPLICATION_ID_EVDR` |
 
 A few of these are worth calling out specifically:
 
 - **`DECOY_OTP=true`** — skips real Gmail polling and always types `DECOY_OTP_CODE` (`122222` by default). This is what you want for demo/dev environments where OTP is fixed. Set to `false` only if you need to fetch a real OTP from Gmail (see Step 4).
 - **`SUBMIT_APPLICATION`** — gates the final "Submit" button on the Employer's Declaration page. The declaration is legally binding, so this is intentionally explicit rather than defaulted to always-on.
 - **`ADMIN_ACCEPT_REVIEW`** — gates every "ACCEPT"/"SUBMIT"/"REVIEW" click across the whole admin approval chain. Leave `false` to just exercise the review UI (fill fields, click Save) without actually advancing any application through the real workflow.
-- **`APPLICATION_ID` / `APPLICATION_REF_NO`** — set both to run `admin-approve-application.test.js` against a *specific* existing application, without needing a fresh employer-side run first. Leave both empty to fall back to whatever `al-autofill-form.test.js` last submitted (see [How the two tests hand off](#how-the-two-tests-hand-off) below).
+- **`APPLICATION_ID` / `APPLICATION_REF_NO`** — set both to run `admin-approve-application.test.js` *or* `evdr-worker-submission.test.js` against a *specific* existing application, without needing a fresh employer-side run first. Leave both empty to fall back to whatever `al-autofill-form.test.js` last submitted (see [How the tests hand off](#how-the-tests-hand-off) below).
+- **`APPLICATION_ID_EVDR`** — a completely separate ID space from `APPLICATION_ID` (that one's the AL application's UUID; this is the short numeric id from the eVDR record's own URL, e.g. `.../licence_expat/?id=1481`). Only used to look up the eVDR-stage officer via the QA API — the eVDR UI itself is still searched by `APPLICATION_REF_NO`. Leave empty to fall back to whatever `evdr-worker-submission.test.js` captured earlier in the same run, or its own saved state file.
 
 ---
 
@@ -113,27 +116,31 @@ node debug-gmail.js
 
 ## Running the Tests
 
-The suite is split into two Playwright **projects** so each half can run standalone or chained:
+The suite is split into three Playwright **projects** so each leg can run standalone or chained:
 
 | Command | What it runs |
 |---|---|
-| `npm test` | Employer autofill **then** admin approval, in that order, end to end |
+| `npm test` | Employer autofill → admin approval + payment → eVDR submission, in that order, end to end |
 | `npm run test:headed` | Same as above, with a visible browser |
 | `npm run test:autofill-al` | **Only** the employer-side AL application flow |
 | `npm run test:autofill-al:headed` | Same, headed |
-| `npm run test:admin-approve` | **Only** the admin approval chain (see [hand-off](#how-the-two-tests-hand-off) below) |
+| `npm run test:admin-approve` | **Only** the admin approval chain + payment (see [hand-off](#how-the-tests-hand-off) below) |
 | `npm run test:admin-approve:headed` | Same, headed |
+| `npm run test:evdr` | **Only** the eVDR worker submission (employer + admin side) |
+| `npm run test:evdr:headed` | Same, headed |
 | `npm run test:list` | List all discovered tests without running them |
 | `npm run test:ui` | Open Playwright's interactive UI runner |
 | `npm run report` | Open the last HTML report |
 
-`test:admin-approve` never triggers the employer test, and vice versa — they're isolated Playwright projects (`playwright.config.js`), not linked via `dependencies`. Sequencing for the combined `npm test` run is done by chaining the two project-scoped commands in `package.json`, not by Playwright's project-dependency feature.
+None of the three projects trigger each other — they're isolated Playwright projects (`playwright.config.js`), not linked via `dependencies`. Sequencing for the combined `npm test` run is done by chaining the three project-scoped commands in `package.json`, not by Playwright's project-dependency feature.
 
-### How the two tests hand off
+### How the tests hand off
 
 `al-autofill-form.test.js` captures the new application's reference number and UUID **immediately after creation** (not just at final Submit, so a mid-form failure still leaves usable data) and writes them to `.test-state/last-application-id.json`. That file lives outside `test-results/` deliberately, since Playwright wipes its `outputDir` at the start of every run.
 
-`admin-approve-application.test.js` reads that file automatically — unless you set `APPLICATION_ID` + `APPLICATION_REF_NO` in `.env`, in which case those take priority. This lets you re-run the admin approval chain against a specific application repeatedly without regenerating a new one every time.
+`admin-approve-application.test.js` and `evdr-worker-submission.test.js` both read that file automatically — unless you set `APPLICATION_ID` + `APPLICATION_REF_NO` in `.env`, in which case those take priority. This lets you re-run either downstream test against a specific application repeatedly without regenerating a new one every time.
+
+`evdr-worker-submission.test.js` additionally captures its own eVDR-record numeric id (distinct from the AL application's UUID) once it reaches the Visa Form page, saving it to `.test-state/last-evdr-application-id.json` — overridable via `APPLICATION_ID_EVDR`. Note that eVDR only shows applications that have already cleared the full admin approval chain **and** payment, so pointing `evdr-worker-submission.test.js` at a reference number that hasn't been through `admin-approve-application.test.js` yet will correctly fail with "No Applications Found".
 
 ---
 
@@ -176,6 +183,21 @@ Every stage runs in its own fresh browser context (each officer's login is indep
 
 `ADMIN_ACCEPT_REVIEW=false` stops each stage after Save, without clicking Accept/Submit/Review — useful for verifying the review UI without actually advancing a real application through the workflow.
 
+### `evdr-worker-submission.test.js` — eVDR (employer + admin side)
+
+Final leg, run after the application has cleared the full admin approval chain and payment. Structured as a sequence of `test.step()` blocks (visible individually in the HTML report):
+
+**Employer side:**
+1. Logs in, opens the **eVDR** module tile, then force-navigates to the EXPAT-specific page (the module tile itself lands on the NRE menu, not the expat one)
+2. Searches by `APPLICATION_REF_NO`, and picks one worker at random from however many cards share that reference number (one AL application can register several expat workers, but eVDR handles them one at a time)
+3. **Person-in-Charge Details** — if not already filled for the chosen worker, opens the "Company Information" slider (pencil icon) and fills Name/Identity Number/Job Position/Phone/Email/Business start date + a random "Visa Job Name", then Saves
+4. **Visa Form** — captures the eVDR record's own numeric id from the URL (for the admin-side officer lookup later), then fills Entry Point (`LTA KUCHING`), Visa Branch (random, skipped entirely for Malaysian workers), Date of Entry (random, within the last year), passport/proof-of-entry uploads, a randomized BPP Reference Number, eVDR Approved Date (random, within the last year), and an approved-eVDR upload — skipped entirely if already filled on a prior run
+5. Clicks **ADD TO LIST** → **SUBMIT** → confirms the **Employer's Declaration & Undertaking** popup
+
+**Admin side:**
+6. Queries the QA Tools API for the eVDR record's officer, filtered specifically to role `jims_hq_officer_expat` (a separate lookup from the AL-application-UUID-based one in `admin-approve-application.test.js`)
+7. Logs in as that officer, navigates to `/sansols/admin/applications/?module=expat`, clicks the **EVDR** tab (distinct from the **EXPRT** tab used for the AL chain), searches by `APPLICATION_REF_NO` (not the eVDR numeric id — that's only for the officer lookup), picks a random matching card, and clicks **Submit**
+
 ---
 
 ## Reports
@@ -194,15 +216,17 @@ Every run produces, in `test-results/`:
 ```
 playwright-exprt/
 ├── test-files/
-│   ├── al-autofill-form.test.js         ← employer-side AL application flow
-│   └── admin-approve-application.test.js ← admin approval chain + payment
+│   ├── al-autofill-form.test.js          ← employer-side AL application flow
+│   ├── admin-approve-application.test.js ← admin approval chain + payment
+│   └── evdr-worker-submission.test.js    ← eVDR: employer submission + admin approval
 ├── helpers/
 │   ├── login-helpers.js                  ← SSO login/OTP, module selection, admin login flow
 │   └── qa-api-helpers.js                 ← QA Tools API: officer lookup, proforma bypass
 ├── reporters/
 │   └── pdf-summary-reporter.js           ← QA-Report.pdf generator
 ├── .test-state/
-│   └── last-application-id.json          ← hand-off between the two tests (git-ignored)
+│   ├── last-application-id.json          ← AL application hand-off (git-ignored)
+│   └── last-evdr-application-id.json     ← eVDR record hand-off (git-ignored)
 ├── test-results/                         ← screenshots, traces, videos, reports (wiped every run)
 ├── playwright.config.js                  ← projects, reporters, timeouts
 ├── .env                                  ← your local config (git-ignored)
@@ -237,6 +261,9 @@ This is intentional — it means the current officer's action did not actually h
 
 **Landed on `/sansols/admin/dashboard/` instead of `/sansols/admin/applications/`**
 Handled automatically — the test detects this specific URL and force-navigates to the corrected `/admin/applications/` path.
+
+**eVDR test fails with "No Applications Found" / can't confirm the reference no. is visible**
+The reference number hasn't cleared the admin approval chain and payment yet. eVDR only ever shows applications that have already been fully approved and paid — run `admin-approve-application.test.js` (with `ADMIN_ACCEPT_REVIEW=true`) against that reference number first, or point `APPLICATION_REF_NO` at an application you've already confirmed reached that state.
 
 **Error 403: access_denied during Gmail auth**
 Google Cloud Console → APIs & Services → OAuth consent screen → Test users → add your Gmail address.
