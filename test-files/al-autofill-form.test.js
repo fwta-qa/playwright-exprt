@@ -48,44 +48,44 @@ async function clickAddALButton(page) {
     throw new Error(`Popup option "${optionText}" not visible after clicking + FAB. Original error: ${err.message}`);
   }
 
-  // ── Handle "Choose your Pass" modal (if "New Application" was clicked) ────
-  if (!isRenew) {
-    console.log('⏳ Waiting for "Choose your Pass" dialog to appear...');
-    await page.waitForTimeout(1000);
+  // ── Handle "Choose your Pass" modal ───────────────────────────────────────
+  // Renew flow is functionally the same as new in this app: it still shows the
+  // pass-selection modal, but only the EP option is available. The worker-type
+  // menu is only shown for new applications.
+  console.log('⏳ Waiting for "Choose your Pass" dialog to appear...');
+  await page.waitForTimeout(1000);
 
-    const passType = CONFIG.alPassType; // 'ep' | 'pvp'
-    const isPvp = passType === 'pvp';
-    const passTitle = isPvp ? 'Professional Visit Pass' : 'Employment Pass';
-    console.log(`📋 Pass type from ENV (AL_PASS_TYPE="${passType}"): selecting "${passTitle}"`);
+  const passType = isRenew ? 'ep' : CONFIG.alPassType; // renew only supports EP
+  const isPvp = passType === 'pvp';
+  const passTitle = isRenew ? 'Employment Pass' : (isPvp ? 'Professional Visit Pass' : 'Employment Pass');
+  console.log(`📋 Pass type selection for ${applicationType}: "${passTitle}"`);
 
-    // Target the card containing the pass title, then click the "SELECT" button inside it.
-    // The columns are split visually, so we filter by card section having the title text.
-    const passCard = page.locator('div, section').filter({ hasText: passTitle }).last();
-    const selectBtn = passCard.locator('button, [role="button"]').filter({ hasText: /select/i }).first();
+  // Target the card containing the pass title, then click the "SELECT" button inside it.
+  const passCard = page.locator('div, section').filter({ hasText: passTitle }).last();
+  const selectBtn = passCard.locator('button, [role="button"]').filter({ hasText: /select/i }).first();
 
-    await selectBtn.waitFor({ state: 'visible', timeout: 10000 });
-    await selectBtn.click();
-    console.log(`✅ Selected "${passTitle}" successfully!`);
+  await selectBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await selectBtn.click();
+  console.log(`✅ Selected "${passTitle}" successfully!`);
 
-    // ── Handle the "Documents Checklist" / "Proceed" Popup modal ──────────────────
-    console.log('⏳ Waiting for "Documents Checklist" modal to appear...');
-    const proceedBtn = page.getByRole('button', { name: /proceed/i }).or(page.locator(':text("Proceed")')).last();
-    await proceedBtn.waitFor({ state: 'visible', timeout: 15000 });
+  // ── Handle the "Documents Checklist" / "Proceed" Popup modal ──────────────────
+  console.log('⏳ Waiting for "Documents Checklist" modal to appear...');
+  const proceedBtn = page.getByRole('button', { name: /proceed/i }).or(page.locator(':text("Proceed")')).last();
+  await proceedBtn.waitFor({ state: 'visible', timeout: 15000 });
 
-    // Scroll the button into view (since modal content can be long)
-    await proceedBtn.scrollIntoViewIfNeeded();
+  // Scroll the button into view (since modal content can be long)
+  await proceedBtn.scrollIntoViewIfNeeded();
 
-    // Pause for 2 seconds as requested before clicking
-    console.log('⏱️ Pausing for 2 seconds before clicking "Proceed"...');
-    await page.waitForTimeout(2000);
+  // Pause for 2 seconds as requested before clicking
+  console.log('⏱️ Pausing for 2 seconds before clicking "Proceed"...');
+  await page.waitForTimeout(2000);
 
-    await proceedBtn.click({ force: true });
-    console.log('✅ Clicked "Proceed" on the checklist popup!');
+  await proceedBtn.click({ force: true });
+  console.log('✅ Clicked "Proceed" on the checklist popup!');
 
-    await page.waitForTimeout(1000);
-    await page.waitForLoadState('networkidle').catch(() => { });
-    await page.waitForTimeout(2000); // Wait for the transition to the main form page
-  }
+  await page.waitForTimeout(1000);
+  await page.waitForLoadState('networkidle').catch(() => { });
+  await page.waitForTimeout(2000); // Wait for the transition to the main form page
 
   // ── Capture Application No. + ID right after creation ──────────────────
   // The application record (and its unique ID) exists the moment this form
@@ -349,10 +349,14 @@ async function fillAndNavigateEXPRTForm(targetPage) {
       .first();
 
     // Number of expatriate workers to add, controlled via EXPAT_COUNT env
-    // (defaults to 1). The first worker uses AL_EXPAT_TYPE from ENV; every
-    // subsequent worker gets a randomized type between Cross-Posting/Others.
+    // (defaults to 1). New applications show a type menu; renew applications
+    // skip that menu and open the expat modal directly.
     const expatCount = Math.max(1, parseInt(process.env.EXPAT_COUNT || '1', 10));
+    const isRenew = CONFIG.alApplicationType === 'renew';
     console.log(`📋 EXPAT_COUNT from ENV: ${expatCount} expatriate worker(s) will be added.`);
+    if (isRenew) {
+      console.log('📋 Renew application: skipping expatriate-type selection menu.');
+    }
 
     for (let expatIndex = 0; expatIndex < expatCount; expatIndex++) {
     const workerRecord = { index: expatIndex + 1, type: null, name: null, nationality: null, status: 'not started' };
@@ -368,43 +372,49 @@ async function fillAndNavigateEXPRTForm(targetPage) {
       console.log('✅ Clicked "+ Add New" button in Expatriate Details section!');
       await targetPage.waitForTimeout(800);
 
-      // ── Determine Expatriate type for this worker ──
-      // Worker #1 uses AL_EXPAT_TYPE from ENV ('specialist' | 'crossposting' |
-      // 'others'). Every subsequent worker is randomized between
-      // Cross-Posting and Others, per requested behavior.
-      let expatType;
-      if (expatIndex === 0) {
-        expatType = CONFIG.alExpatType;
+      let expatType = null;
+      if (!isRenew) {
+        // Worker #1 uses AL_EXPAT_TYPE from ENV ('specialist' | 'crossposting' |
+        // 'others'). Additional workers use AL_EXPAT_TYPE_ADDITIONAL when set;
+        // otherwise they are randomized between Cross-Posting and Others.
+        if (expatIndex === 0) {
+          expatType = CONFIG.alExpatType;
+        } else if (CONFIG.alAdditionalExpatType) {
+          expatType = CONFIG.alAdditionalExpatType;
+        } else {
+          expatType = Math.random() < 0.5 ? 'crossposting' : 'others';
+        }
+
+        let expatOptionRegex;
+        if (expatType === 'crossposting' || expatType === 'cross-posting') {
+          expatOptionRegex = /Cross-Posting/i;
+        } else if (expatType === 'others') {
+          expatOptionRegex = /Others/i;
+        } else {
+          expatOptionRegex = /Specialist\s*\/\s*Shareholding/i;
+        }
+
+        workerRecord.type = expatType;
+        console.log(`📋 Expatriate Worker #${expatIndex + 1} type: "${expatType}" matching: ${expatOptionRegex}`);
+
+        // Wait for MUI Menu popover to open after clicking + Add New
+        await targetPage.waitForTimeout(500);
+
+        const expatOption = targetPage.locator('[role="menuitem"]')
+          .or(targetPage.locator('li.MuiMenuItem-root'))
+          .or(targetPage.locator('.MuiMenu-paper li'))
+          .filter({ hasText: expatOptionRegex })
+          .first();
+
+        await expatOption.waitFor({ state: 'visible', timeout: 8000 });
+        await expatOption.scrollIntoViewIfNeeded().catch(() => { });
+        await expatOption.click({ force: true });
+        console.log(`✅ Selected "${expatType}" from "+ Add New" menu!`);
       } else {
-        expatType = Math.random() < 0.5 ? 'crossposting' : 'others';
+        workerRecord.type = 'renew-direct';
+        console.log(`📋 Renew application: no expatriate type selection for worker #${expatIndex + 1}. Opening modal directly.`);
       }
 
-      let expatOptionRegex;
-      if (expatType === 'crossposting' || expatType === 'cross-posting') {
-        expatOptionRegex = /Cross-Posting/i;
-      } else if (expatType === 'others') {
-        expatOptionRegex = /Others/i;
-      } else {
-        // Default: 'specialist'
-        expatOptionRegex = /Specialist\s*\/\s*Shareholding/i;
-      }
-
-      workerRecord.type = expatType;
-      console.log(`📋 Expatriate Worker #${expatIndex + 1} type: "${expatType}" matching: ${expatOptionRegex}`);
-
-      // Wait for MUI Menu popover to open after clicking + Add New
-      await targetPage.waitForTimeout(500);
-
-      const expatOption = targetPage.locator('[role="menuitem"]')
-        .or(targetPage.locator('li.MuiMenuItem-root'))
-        .or(targetPage.locator('.MuiMenu-paper li'))
-        .filter({ hasText: expatOptionRegex })
-        .first();
-
-      await expatOption.waitFor({ state: 'visible', timeout: 8000 });
-      await expatOption.scrollIntoViewIfNeeded().catch(() => { });
-      await expatOption.click({ force: true });
-      console.log(`✅ Selected "${expatType}" from "+ Add New" menu!`);
       await targetPage.waitForTimeout(2000); // Give modal time to animate in after menu click
 
       // ── Step 5: Fill "Add New Expatriate Details" Modal (Page 1 - Personal Details) ────
@@ -1045,6 +1055,195 @@ async function fillAndNavigateEXPRTForm(targetPage) {
         console.log(`⚠️ Could not save Page 1 / click Next: ${e.message}`);
       }
 
+      // ── Renew-only Employment Pass History step ─────────────────────────────
+      // For renew applications, the app inserts an additional EP history page
+      // before the normal Employment History page. This page requires dates,
+      // reference number, upload of current EP photo and previous approval
+      // letter, and year of renewal selection.
+      if (isRenew) {
+        try {
+          console.log('⏳ Waiting for renew-only "Employment Pass History" page to load...');
+          const epHistoryHeader = dialogModal.locator('text=Employment Pass History').first();
+          await epHistoryHeader.waitFor({ state: 'visible', timeout: 10000 });
+          console.log('✓ Employment Pass History page loaded successfully.');
+
+          const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+          const toDateInputValue = (value) => {
+            if (!value || !/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
+            const [mm, dd, yyyy] = value.split('/');
+            return `${yyyy}-${mm}-${dd}`;
+          };
+
+          const fillRenewField = async (labelText, value, isDate = false) => {
+            const variants = [
+              labelText,
+              labelText.replace(/\./g, ''),
+              labelText.replace(/\s*No\./i, ' Number'),
+              labelText.replace(/Reference No\./i, 'Reference Number'),
+            ];
+
+            let field = null;
+
+            for (const variant of variants) {
+              const candidate = dialogModal
+                .locator('label, p, span, div')
+                .filter({ hasText: new RegExp(`^${escapeRegex(variant)}\\s*\\*?$`, 'i') })
+                .first();
+
+              const candidateCount = await candidate.count().catch(() => 0);
+              if (!candidateCount) continue;
+
+              field = candidate
+                .locator(`xpath=../descendant::input[1] | ../descendant::textarea[1] | ../descendant::div[@role="combobox"][1] | ../descendant::select[1]`)
+                .first();
+
+              const fieldCount = await field.count().catch(() => 0);
+              if (fieldCount) break;
+            }
+
+            if (!field) {
+              throw new Error(`Could not locate the field for "${labelText}" on the renew Employment Pass History page.`);
+            }
+
+            await field.waitFor({ state: 'visible', timeout: 8000 }).catch(async () => {
+              const fallback = dialogModal.getByLabel(labelText, { exact: false }).first();
+              await fallback.waitFor({ state: 'visible', timeout: 8000 });
+              return fallback;
+            });
+
+            const fieldType = await field.getAttribute('type').catch(() => '');
+            const normalizedValue = isDate || fieldType === 'date' ? toDateInputValue(value) : value;
+            await field.click({ force: true });
+            await field.fill(normalizedValue);
+            console.log(`  ✓ Filled [${labelText}]: "${normalizedValue}"`);
+          };
+
+          const startDate = '01/01/2022';
+          const expiryDate = '01/01/2027';
+          const refNo = 'AB1234';
+
+          await fillRenewField('Previous Employment Pass Start Date', startDate, true);
+          await fillRenewField('Previous Employment Pass Expiry Date', expiryDate, true);
+          await fillRenewField('Previous Employment Pass Reference No.', refNo);
+
+          const pdfDir = path.dirname(CONFIG.pdfUploadPath || '');
+          const currentEpPhotoPath = path.join(pdfDir, 'passport.jpg');
+          const approvalLetterPath = path.join(pdfDir, '5U3G3R.pdf');
+
+          const getRenewUploadButton = async (labelPattern, fallbackIndex) => {
+            const labelNode = dialogModal
+              .locator('label, p, span, div')
+              .filter({ hasText: labelPattern })
+              .first();
+
+            const rowButton = labelNode
+              .locator('xpath=ancestor::*[.//button or .//*[@role="button"]][1]')
+              .getByRole('button', { name: /Upload Here/i })
+              .first();
+
+            if (await rowButton.count().catch(() => 0)) {
+              await rowButton.waitFor({ state: 'visible', timeout: 5000 });
+              return rowButton;
+            }
+
+            const fallbackButton = dialogModal
+              .locator('button, [role="button"]')
+              .filter({ hasText: /^Upload Here$/i })
+              .nth(fallbackIndex)
+              .first();
+            await fallbackButton.waitFor({ state: 'visible', timeout: 5000 });
+            return fallbackButton;
+          };
+
+          const uploadRenewFile = async (filePath, labelPattern, fallbackIndex, name) => {
+            const fileInput = dialogModal.locator('input[type="file"]').nth(fallbackIndex);
+            if (await fileInput.count().catch(() => 0)) {
+              await fileInput.waitFor({ state: 'attached', timeout: 5000 });
+              await fileInput.setInputFiles(filePath);
+              console.log(`  ✓ Uploaded ${name}: ${filePath}`);
+              return;
+            }
+
+            const uploadButton = await getRenewUploadButton(labelPattern, fallbackIndex);
+            const chooserPromise = targetPage.waitForEvent('filechooser', { timeout: 10000 }).catch(() => null);
+            await uploadButton.click({ force: true });
+            const chooser = await chooserPromise;
+            if (!chooser) throw new Error(`No file chooser opened for ${name}.`);
+            await chooser.setFiles(filePath);
+            console.log(`  ✓ Uploaded ${name}: ${filePath}`);
+          };
+
+          await uploadRenewFile(
+            currentEpPhotoPath,
+            /Current EP Photo from Expatriate Passport\s*\(As shown in the passport\)/i,
+            0,
+            'Current EP Photo'
+          );
+          await uploadRenewFile(
+            approvalLetterPath,
+            /Previous Approval Letter/i,
+            1,
+            'Previous Approval Letter'
+          );
+
+          const yearOfRenewalTrigger = dialogModal.locator('label, p, span, div')
+            .filter({ hasText: /^Year of Renewal\s*\*?$/i })
+            .locator('xpath=../descendant::select[1] | ../descendant::div[@role="combobox"][1] | ../descendant::div[contains(@class,"MuiSelect-select")][1]')
+            .first();
+
+          await yearOfRenewalTrigger.waitFor({ state: 'visible', timeout: 6000 });
+          const renewalYear = String(Math.floor(Math.random() * 4) + 2);
+
+          const triggerTagName = await yearOfRenewalTrigger.evaluate((element) => element.tagName).catch(() => '');
+          if (triggerTagName.toLowerCase() === 'select') {
+            const matchingOption = yearOfRenewalTrigger.locator('option')
+              .filter({ hasText: new RegExp(`^\\s*Year\\s*${renewalYear}\\s*$`, 'i') })
+              .first();
+            await matchingOption.waitFor({ state: 'attached', timeout: 6000 });
+            await yearOfRenewalTrigger.selectOption({ label: await matchingOption.innerText() });
+          } else {
+            await yearOfRenewalTrigger.click({ force: true });
+            await targetPage.waitForTimeout(500);
+
+            const yearPattern = new RegExp(`^\\s*Year\\s*${renewalYear}\\s*$`, 'i');
+            const optionItems = targetPage.locator('[role="option"], .MuiMenuItem-root, li')
+              .filter({ visible: true });
+            const renewalOption = optionItems
+              .filter({ hasText: yearPattern })
+              .first();
+
+            if (await renewalOption.count().catch(() => 0)) {
+              await renewalOption.waitFor({ state: 'visible', timeout: 6000 });
+              await renewalOption.click();
+            } else {
+              const availableYearOption = optionItems
+                .filter({ hasText: /^\s*Year\s*\d+\s*$/i })
+                .first();
+              await availableYearOption.waitFor({ state: 'visible', timeout: 6000 });
+              const availableYearText = (await availableYearOption.innerText()).trim();
+              await availableYearOption.click();
+              console.log(`  ℹ️ Requested renewal year ${renewalYear} was unavailable; selected available option "${availableYearText}".`);
+            }
+          }
+
+          console.log(`  ✓ Selected Year of Renewal: Year ${renewalYear}`);
+
+          // The auto-generated duration summary is read-only; no manual value is needed.
+          console.log('  ℹ️ Previous Approved Employment Pass Duration and summary are auto-generated; leaving them unchanged.');
+
+          const nextBtn = dialogModal.getByRole('button', { name: /Next/i }).first()
+            .or(dialogModal.locator('button:has-text("Next")').first());
+          await nextBtn.waitFor({ state: 'visible', timeout: 8000 });
+          await nextBtn.scrollIntoViewIfNeeded();
+          await nextBtn.click();
+          console.log('➡️ Clicked "Next" after completing Employment Pass History for renew.');
+          await targetPage.waitForTimeout(1500);
+        } catch (e) {
+          console.log(`⚠️ Error on renew Employment Pass History page: ${e.message}`);
+        }
+      }
+
       // ── Page 2: Employment History Interaction ──
       try {
         console.log('⏳ Waiting for Page 2 (Employment History) to load...');
@@ -1241,13 +1440,15 @@ async function fillAndNavigateEXPRTForm(targetPage) {
         // The placeholder wording differs by Expatriate type: "Others" shows
         // just "Use HOR" (no MASCO option), while Specialist/Cross-Posting
         // show "Use HOR or MASCO Code". Match on the type-appropriate text.
-        const jobFieldPlaceholder = expatType === 'others' ? 'Use HOR' : 'Use HOR or MASCO Code';
+        const jobFieldPlaceholder = isRenew
+          ? 'MASCO Code'
+          : (expatType === 'others' ? 'Use HOR' : 'Use HOR or MASCO Code');
         const jobInputField = dialogModal
-          .locator(`input[placeholder="${jobFieldPlaceholder}"]`)
+          .locator(`input[placeholder="${jobFieldPlaceholder}"], input[placeholder="Enter MASCO Code"]`)
           .first();
 
         const jobFieldWrapper = dialogModal
-          .locator(`div.MuiInputBase-root:has(input[placeholder="${jobFieldPlaceholder}"])`)
+          .locator(`div.MuiInputBase-root:has(input[placeholder="${jobFieldPlaceholder}"], input[placeholder="Enter MASCO Code here"])`)
           .first();
 
         await jobFieldWrapper.waitFor({ state: 'visible', timeout: 6000 });
@@ -1287,7 +1488,10 @@ async function fillAndNavigateEXPRTForm(targetPage) {
         const hasNoHor = await noHorIndicator.isVisible().catch(() => false);
 
         let useMasco;
-        if (expatType === 'others') {
+        if (isRenew) {
+          useMasco = true;
+          console.log('📋 Renew application has no HOR report — using MASCO Code directly.');
+        } else if (expatType === 'others') {
           useMasco = false;
           console.log('📋 Expatriate type "Others" — MASCO Code is not available for this type, using HOR.');
         } else if (hasNoHor) {
@@ -1674,6 +1878,42 @@ async function fillAndNavigateEXPRTForm(targetPage) {
           await targetPage.waitForTimeout(1200);
 
           console.log(`  └─ Successfully uploaded [${path.basename(fileItem.filePath)}]`);
+        }
+
+        // Renew applications have two additional supporting-document uploads.
+        // These fields do not have stable IDs, so locate the hidden file input
+        // immediately following each exact visible document label.
+        if (isRenew) {
+          const renewFileMap = [
+            {
+              label: 'Latest 3 Months Salary Payslip',
+              filePath: path.join(pdfDir, 'payslip.jpg')
+            },
+            {
+              label: 'Income Tax Payment Receipt/ TIN Registration Receipt',
+              filePath: path.join(pdfDir, 'incometax.jpg')
+            }
+          ];
+
+          for (const fileItem of renewFileMap) {
+            console.log(`  📎 Renew upload for "${fileItem.label}": ${fileItem.filePath}`);
+
+            const escapedLabel = fileItem.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const labelNode = targetPage
+              .locator('p, span, label, div')
+              .filter({ hasText: new RegExp(`^${escapedLabel}\\s*\\*?$`, 'i') })
+              .first();
+
+            const fileInput = labelNode
+              .locator('xpath=ancestor::*[.//button[normalize-space()="Upload Here" or normalize-space()="Upload File" or @role="button"]][1]')
+              .locator('input[type="file"]')
+              .first();
+
+            await fileInput.waitFor({ state: 'attached', timeout: 10000 });
+            await fileInput.setInputFiles(fileItem.filePath);
+            await targetPage.waitForTimeout(1200);
+            console.log(`  └─ Successfully uploaded renew document [${path.basename(fileItem.filePath)}]`);
+          }
         }
 
         // ── Employee Transfer Letter (only required for Cross-Posting) ──
@@ -2298,7 +2538,7 @@ test.describe('EXPRT - Create AL Flow', () => {
 
       // Step 2: Continue straight to waiting for the correct layout state
       console.log('⏳ Confirming EXPRT application page state...');
-      await waitForUrlOrRefresh(exprtPage, '**sansols/expat/applications/**/', 10000, 3);
+      await waitForUrlOrRefresh(exprtPage, '**/expat/applications/**/', 10000, 3);  // remove sansols for dev
 
       // Step 3: Now interact with Tab 2 safely
       await clickAddALButton(exprtPage);
