@@ -143,7 +143,7 @@ The suite is split into two Playwright **projects** so each half can run standal
 
 - Login + OTP, company/module selection
 - Corporate Details (Pages 1 & 2)
-- Expatriate Workers — count controlled by `EXPAT_COUNT`; worker #1 uses `AL_EXPAT_TYPE`, later workers are randomized between Cross-Posting/Others
+- Expatriate Workers — count controlled by `EXPAT_COUNT`; worker #1 uses `AL_EXPAT_TYPE`, while `AL_EXPAT_TYPE_ADDITIONAL` can assign a category to every later worker (blank keeps the Cross-Posting/Others randomization)
   - HOR vs MASCO job-position randomization (falls back to MASCO if no HOR listing exists)
   - Malaysian-nationality conditional fields (State + NRIC, with Date of Birth auto-derived from NRIC)
   - Nationality-linked realistic names and home addresses (Indonesia/India/Philippines/etc.)

@@ -31,6 +31,8 @@ const CONFIG = {
   // Expat category option to pick from "+ Add New" dropdown
   // Options: 'specialist' (Specialist / Shareholding) | 'crossposting' (Cross-Posting) | 'others' (Others)
   alExpatType: (process.env.AL_EXPAT_TYPE || 'specialist').trim().toLowerCase(),
+  // Expat category for workers after the first; blank keeps the random fallback
+  alAdditionalExpatType: (process.env.AL_EXPAT_TYPE_ADDITIONAL || '').trim().toLowerCase(),
   elementTimeout: 15000,
 };
 
